@@ -1415,6 +1415,14 @@ llama-qwen2vl-cli: examples/llava/qwen2vl-cli.cpp \
 	$(OBJ_ALL)
 	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
 
+llama-qwen2vl-lib: examples/llava/qwen2vl-lib.cpp \
+	examples/llava/llava.cpp \
+	examples/llava/llava.h \
+	examples/llava/clip.cpp \
+	examples/llava/clip.h \
+	$(OBJ_ALL)
+	$(CXX) $(CXXFLAGS) $< $(filter-out %.h $<,$^) -o $@ $(LDFLAGS) -Wno-cast-qual
+
 ifeq ($(UNAME_S),Darwin)
 swift: examples/batched.swift
 	(cd examples/batched.swift; make build)
