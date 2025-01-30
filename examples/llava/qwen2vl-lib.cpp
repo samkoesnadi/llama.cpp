@@ -235,79 +235,6 @@ static struct llava_image_embed * load_image(llava_context * ctx_llava, common_p
     return embed;
 }
 
-static void process_prompt(struct llava_context * ctx_llava, struct llava_image_embed * image_embed, common_params * params, const std::string & prompt) {
-    int n_past = 0;
-    int cur_pos_id = 0;
-
-    const int max_tgt_len = params->n_predict < 0 ? 256 : params->n_predict;
-
-    std::string system_prompt, user_prompt;
-    size_t image_pos = prompt.find("<|vision_start|>");
-    if (image_pos != std::string::npos) {
-        // new templating mode: Provide the full prompt including system message and use <image> as a placeholder for the image
-        system_prompt = prompt.substr(0, image_pos);
-        user_prompt = prompt.substr(image_pos + std::string("<|vision_pad|>").length());
-        LOG_INF("system_prompt: %s\n", system_prompt.c_str());
-        if (params->verbose_prompt) {
-            auto tmp = common_tokenize(ctx_llava->ctx_llama, system_prompt, true, true);
-            for (int i = 0; i < (int) tmp.size(); i++) {
-                LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
-            }
-        }
-        LOG_INF("user_prompt: %s\n", user_prompt.c_str());
-        if (params->verbose_prompt) {
-            auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
-            for (int i = 0; i < (int) tmp.size(); i++) {
-                LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
-            }
-        }
-    } else {
-        // llava-1.5 native mode
-        system_prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|>";
-        user_prompt = "<|vision_end|>" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
-        if (params->verbose_prompt) {
-            auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
-            for (int i = 0; i < (int) tmp.size(); i++) {
-                LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
-            }
-        }
-    }
-
-    eval_string(ctx_llava->ctx_llama, system_prompt.c_str(), params->n_batch, &n_past, &cur_pos_id, true);
-    if (image_embed != nullptr) {
-        auto image_size = clip_get_load_image_size(ctx_llava->ctx_clip);
-        qwen2vl_eval_image_embed(ctx_llava->ctx_llama, image_embed, params->n_batch, &n_past, &cur_pos_id, image_size);
-    }
-    eval_string(ctx_llava->ctx_llama, user_prompt.c_str(), params->n_batch, &n_past, &cur_pos_id, false);
-
-    // generate the response
-
-    LOG("\n");
-
-    struct common_sampler * smpl = common_sampler_init(ctx_llava->model, params->sampling);
-    if (!smpl) {
-        LOG_ERR("%s: failed to initialize sampling subsystem\n", __func__);
-        exit(1);
-    }
-
-    std::string response = "";
-    for (int i = 0; i < max_tgt_len; i++) {
-        const char * tmp = sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
-        response += tmp;
-        if (strcmp(tmp, "</s>") == 0) break;
-        if (strstr(tmp, "###")) break; // Yi-VL behavior
-        LOG("%s", tmp);
-        if (strstr(response.c_str(), "<|im_end|>")) break; // Yi-34B llava-1.6 - for some reason those decode not as the correct token (tokenizer works)
-        if (strstr(response.c_str(), "<|im_start|>")) break; // Yi-34B llava-1.6
-        if (strstr(response.c_str(), "USER:")) break; // mistral llava-1.6
-
-        fflush(stdout);
-    }
-
-    common_sampler_free(smpl);
-    LOG("\n");
-}
-
 static struct llama_model * llava_init(common_params * params) {
     llama_backend_init();
     llama_numa_init(params->numa);
@@ -322,7 +249,7 @@ static struct llama_model * llava_init(common_params * params) {
     return model;
 }
 
-static struct llava_context * llava_init_context(common_params * params, llama_model * model) {
+static struct llava_context * llava_init_context(common_params * params, llama_model * model, int verbosity_level = -100) {
     const char * clip_path = params->mmproj.c_str();
 
     auto prompt = params->prompt;
@@ -330,7 +257,7 @@ static struct llava_context * llava_init_context(common_params * params, llama_m
         prompt = "describe the image in detail.";
     }
 
-    auto ctx_clip = clip_model_load(clip_path, /*verbosity=*/ 1);
+    auto ctx_clip = clip_model_load(clip_path, /*verbosity=*/ verbosity_level);
 
     llama_context_params ctx_params = common_context_params_to_llama(*params);
     ctx_params.n_ctx           = params->n_ctx < 2048 ? 2048 : params->n_ctx; // we need a longer context size to process image embeddings
@@ -513,15 +440,98 @@ static void debug_dump_img_embed(struct llava_context * ctx_llava) {
 #endif
 
 class Qwen2VL {
+private:
     struct llava_context* ctx_llava = nullptr;
     struct llama_model* model = nullptr;
     common_params default_params;
-    char* generated_token;
+    std::string response = "";
+
+protected:
+    void process_prompt(struct llava_context * ctx_llava, struct llava_image_embed * image_embed, common_params * params, const std::string & prompt) {
+        int n_past = 0;
+        int cur_pos_id = 0;
+
+        const int max_tgt_len = params->n_predict < 0 ? 256 : params->n_predict;
+
+        std::string system_prompt, user_prompt;
+        size_t image_pos = prompt.find("<|vision_start|>");
+        if (image_pos != std::string::npos) {
+            // new templating mode: Provide the full prompt including system message and use <image> as a placeholder for the image
+            system_prompt = prompt.substr(0, image_pos);
+            user_prompt = prompt.substr(image_pos + std::string("<|vision_pad|>").length());
+            LOG_INF("system_prompt: %s\n", system_prompt.c_str());
+            if (params->verbose_prompt) {
+                auto tmp = common_tokenize(ctx_llava->ctx_llama, system_prompt, true, true);
+                for (int i = 0; i < (int) tmp.size(); i++) {
+                    LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
+                }
+            }
+            LOG_INF("user_prompt: %s\n", user_prompt.c_str());
+            if (params->verbose_prompt) {
+                auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
+                for (int i = 0; i < (int) tmp.size(); i++) {
+                    LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
+                }
+            }
+        } else {
+            // llava-1.5 native mode
+            system_prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|>";
+            user_prompt = "<|vision_end|>" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
+            if (params->verbose_prompt) {
+                auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
+                for (int i = 0; i < (int) tmp.size(); i++) {
+                    LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
+                }
+            }
+        }
+
+        eval_string(ctx_llava->ctx_llama, system_prompt.c_str(), params->n_batch, &n_past, &cur_pos_id, true);
+        if (image_embed != nullptr) {
+            auto image_size = clip_get_load_image_size(ctx_llava->ctx_clip);
+            qwen2vl_eval_image_embed(ctx_llava->ctx_llama, image_embed, params->n_batch, &n_past, &cur_pos_id, image_size);
+        }
+        eval_string(ctx_llava->ctx_llama, user_prompt.c_str(), params->n_batch, &n_past, &cur_pos_id, false);
+
+        // generate the response
+
+        LOG("\n");
+
+        struct common_sampler * smpl = common_sampler_init(ctx_llava->model, params->sampling);
+        if (!smpl) {
+            LOG_ERR("%s: failed to initialize sampling subsystem\n", __func__);
+            exit(1);
+        }
+
+        response = "";
+        for (int i = 0; i < max_tgt_len; i++) {
+            const char * tmp = sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
+            if (strcmp(tmp, "</s>") == 0) break;
+            if (strstr(tmp, "###")) break; // Yi-VL behavior
+            response += tmp;
+            LOG("%s", tmp);
+            if (strstr(response.c_str(), "<|im_end|>")) break; // Yi-34B llava-1.6 - for some reason those decode not as the correct token (tokenizer works)
+            if (strstr(response.c_str(), "<|im_start|>")) break; // Yi-34B llava-1.6
+            if (strstr(response.c_str(), "USER:")) break; // mistral llava-1.6
+
+            fflush(stdout);
+        }
+
+        common_sampler_free(smpl);
+        LOG("\n");
+    }
+
+public:
+    int get_response(char* &response_chr) {
+        response_chr = (char*) response.c_str();
+        return 0;
+    }
 
     Qwen2VL(
         const char* model,
-        const char* mmproj
+        const char* mmproj,
+        int verbosity_level = -100
     ) {
+        common_log_set_verbosity_thold(verbosity_level);
         ggml_time_init();
 
         char * argv[] = {
@@ -529,10 +539,12 @@ class Qwen2VL {
             "-m",
             (char*) model,
             "--mmproj",
-            (char*) mmproj
+            (char*) mmproj,
+            "-lv",
+            (char*) std::to_string(verbosity_level).c_str()
         };
 
-        if (!common_params_parse(5, argv, default_params, LLAMA_EXAMPLE_LLAVA, print_usage)) {
+        if (!common_params_parse(sizeof(argv) / sizeof(char*), argv, default_params, LLAMA_EXAMPLE_LLAVA, print_usage)) {
             throw "common_params_parse error";
         }
 
@@ -542,8 +554,7 @@ class Qwen2VL {
         if (model == nullptr) {
             throw sprintf("%s: error: failed to init llava model\n", __func__);
         }
-
-        this->ctx_llava = llava_init_context(&default_params, this->model);
+        this->ctx_llava = llava_init_context(&default_params, this->model, verbosity_level);
     }
 
     ~Qwen2VL() {
@@ -563,14 +574,10 @@ class Qwen2VL {
             process_prompt(ctx_llava, image_embed, &params, params.prompt);
             llava_image_embed_free(image_embed);
         } else if (params.image.empty()) {
-            auto ctx_llava = llava_init_context(&params, model);
-
             // process the prompt
             process_prompt(ctx_llava, nullptr, &params, params.prompt);
         } else {
             for (auto & image : params.image) {
-                auto * ctx_llava = llava_init_context(&params, model);
-
                 auto * image_embed = load_image(ctx_llava, &params, image);
                 if (!image_embed) {
                     LOG_ERR("%s: failed to load image %s. Terminating\n\n", __func__, image.c_str());
@@ -579,16 +586,28 @@ class Qwen2VL {
 
                 // process the prompt
                 process_prompt(ctx_llava, image_embed, &params, params.prompt);
-
-                llama_perf_context_print(ctx_llava->ctx_llama);
                 llava_image_embed_free(image_embed);
             }
         }
+
+        return 0;
     }
 };
 
 int main(int argc, char ** argv) {
-    
+    Qwen2VL* processor = new Qwen2VL(
+        "/home/sami/Documents/projects/technology-robot/third-party/llama.cpp/tmp/Qwen2-VL-2B-Instruct-Q4_K_L.gguf",
+        "/home/sami/Documents/projects/technology-robot/third-party/llama.cpp/tmp/mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
+        -100
+    );
+
+    processor->chat("How are you?");
+
+    char* response;
+    processor->get_response(response);
+    std::cout << response << std::endl;
+
+    delete processor;
 
     return 0;
 }
