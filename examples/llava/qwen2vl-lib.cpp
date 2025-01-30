@@ -445,50 +445,29 @@ private:
     struct llama_model* model = nullptr;
     common_params default_params;
     std::string response = "";
+    int n_past = 0;
+    int cur_pos_id = 0;
+    const char* system_prompt = "You are a helpful assistant.";
 
 protected:
     void process_prompt(struct llava_context * ctx_llava, struct llava_image_embed * image_embed, common_params * params, const std::string & prompt) {
-        int n_past = 0;
-        int cur_pos_id = 0;
-
         const int max_tgt_len = params->n_predict < 0 ? 256 : params->n_predict;
+        std::string user_prompt = prompt + "<|im_end|>\n<|im_start|>assistant\n";
 
-        std::string system_prompt, user_prompt;
-        size_t image_pos = prompt.find("<|vision_start|>");
-        if (image_pos != std::string::npos) {
-            // new templating mode: Provide the full prompt including system message and use <image> as a placeholder for the image
-            system_prompt = prompt.substr(0, image_pos);
-            user_prompt = prompt.substr(image_pos + std::string("<|vision_pad|>").length());
-            LOG_INF("system_prompt: %s\n", system_prompt.c_str());
-            if (params->verbose_prompt) {
-                auto tmp = common_tokenize(ctx_llava->ctx_llama, system_prompt, true, true);
-                for (int i = 0; i < (int) tmp.size(); i++) {
-                    LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
-                }
-            }
-            LOG_INF("user_prompt: %s\n", user_prompt.c_str());
-            if (params->verbose_prompt) {
-                auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
-                for (int i = 0; i < (int) tmp.size(); i++) {
-                    LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
-                }
-            }
-        } else {
-            // llava-1.5 native mode
-            system_prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|>";
-            user_prompt = "<|vision_end|>" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
-            if (params->verbose_prompt) {
-                auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
-                for (int i = 0; i < (int) tmp.size(); i++) {
-                    LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
-                }
+        if (params->verbose_prompt) {
+            auto tmp = common_tokenize(ctx_llava->ctx_llama, user_prompt, true, true);
+            for (int i = 0; i < (int) tmp.size(); i++) {
+                LOG_INF("%6d -> '%s'\n", tmp[i], common_token_to_piece(ctx_llava->ctx_llama, tmp[i]).c_str());
             }
         }
 
-        eval_string(ctx_llava->ctx_llama, system_prompt.c_str(), params->n_batch, &n_past, &cur_pos_id, true);
+        eval_string(ctx_llava->ctx_llama, "<|im_start|>user\n", params->n_batch, &n_past, &cur_pos_id, true);
+
         if (image_embed != nullptr) {
+            eval_string(ctx_llava->ctx_llama, "<|vision_start|>", params->n_batch, &n_past, &cur_pos_id, true);
             auto image_size = clip_get_load_image_size(ctx_llava->ctx_clip);
             qwen2vl_eval_image_embed(ctx_llava->ctx_llama, image_embed, params->n_batch, &n_past, &cur_pos_id, image_size);
+            eval_string(ctx_llava->ctx_llama, "<|vision_end|>", params->n_batch, &n_past, &cur_pos_id, true);
         }
         eval_string(ctx_llava->ctx_llama, user_prompt.c_str(), params->n_batch, &n_past, &cur_pos_id, false);
 
@@ -502,7 +481,6 @@ protected:
             exit(1);
         }
 
-        response = "";
         for (int i = 0; i < max_tgt_len; i++) {
             const char * tmp = sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
             if (strcmp(tmp, "</s>") == 0) break;
@@ -520,6 +498,12 @@ protected:
         LOG("\n");
     }
 
+    void eval_system_prompt() {
+        std::string full_system_prompt;
+        full_system_prompt = "<|im_start|>system\n" + std::string(system_prompt) + "<|im_end|>\n";
+        eval_string(ctx_llava->ctx_llama, full_system_prompt.c_str(), default_params.n_batch, &n_past, &cur_pos_id, true);
+    }
+
 public:
     int get_response(char* &response_chr) {
         response_chr = (char*) response.c_str();
@@ -529,10 +513,15 @@ public:
     Qwen2VL(
         const char* model,
         const char* mmproj,
+        const char* system_prompt = "You are a helpful assistant.",
+        uint ctx_size = 4096,
+        float temp = 0.8,
+        int top_k = 40,
+        float top_p = 0.9,
+        int n_predict = -1,
         int verbosity_level = -100
-    ) {
+    ) : system_prompt(system_prompt) {
         common_log_set_verbosity_thold(verbosity_level);
-        ggml_time_init();
 
         char * argv[] = {
             "pwd",
@@ -541,7 +530,17 @@ public:
             "--mmproj",
             (char*) mmproj,
             "-lv",
-            (char*) std::to_string(verbosity_level).c_str()
+            (char*) std::to_string(verbosity_level).c_str(),
+            "--ctx-size",
+            (char*) std::to_string(ctx_size).c_str(),
+            "--temp",
+            (char*) std::to_string(temp).c_str(),
+            "--top-k",
+            (char*) std::to_string(top_k).c_str(),
+            "--top-p",
+            (char*) std::to_string(top_p).c_str(),
+            "--n-predict",
+            (char*) std::to_string(n_predict).c_str(),
         };
 
         if (!common_params_parse(sizeof(argv) / sizeof(char*), argv, default_params, LLAMA_EXAMPLE_LLAVA, print_usage)) {
@@ -555,17 +554,41 @@ public:
             throw sprintf("%s: error: failed to init llava model\n", __func__);
         }
         this->ctx_llava = llava_init_context(&default_params, this->model, verbosity_level);
+
+        eval_system_prompt();
     }
 
     ~Qwen2VL() {
+        n_past = 0;
+        cur_pos_id = 0;
         this->ctx_llava->model = nullptr;
         llava_free(this->ctx_llava);
         llama_model_free(this->model);
     }
 
     int chat(const char* prompt) {
+        if ((n_past + default_params.n_predict) > default_params.n_ctx) {
+            n_past = 0;
+            cur_pos_id = 0;
+
+            llama_free(ctx_llava->ctx_llama);
+            ctx_llava->ctx_llama = nullptr;
+
+            llama_context_params ctx_params = common_context_params_to_llama(default_params);
+            ctx_params.n_ctx           = default_params.n_ctx < 2048 ? 2048 : default_params.n_ctx; // we need a longer context size to process image embeddings
+            ctx_llava->ctx_llama = llama_init_from_model(model, ctx_params);
+
+            if (ctx_llava->ctx_llama == nullptr) {
+                LOG_ERR("%s: failed to create the llama_context\n" , __func__);
+                return -1;
+            }
+
+            eval_system_prompt();
+        }
+
         common_params params = default_params;
         params.prompt = std::string(prompt);
+        response = "";
 
         if (prompt_contains_image(params.prompt)) {
             auto * image_embed = load_image(ctx_llava, &params, "");
@@ -594,20 +617,68 @@ public:
     }
 };
 
-int main(int argc, char ** argv) {
-    Qwen2VL* processor = new Qwen2VL(
-        "/home/sami/Documents/projects/technology-robot/third-party/llama.cpp/tmp/Qwen2-VL-2B-Instruct-Q4_K_L.gguf",
-        "/home/sami/Documents/projects/technology-robot/third-party/llama.cpp/tmp/mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
-        -100
+
+Qwen2VL* processor = nullptr;
+
+void Qwen2VL_init(
+    const char* model,
+    const char* mmproj,
+    const char* system_prompt,
+    unsigned int ctx_size = 4096,
+    float temp = 0.8,
+    int top_k = 40,
+    float top_p = 0.9,
+    int n_predict = -1,
+    int verbosity_level = -100
+) {
+    processor = new Qwen2VL(
+        model,
+        mmproj,
+        system_prompt,
+        ctx_size,
+        temp,
+        top_k,
+        top_p,
+        n_predict,
+        verbosity_level
     );
-
-    processor->chat("How are you?");
-
-    char* response;
-    processor->get_response(response);
-    std::cout << response << std::endl;
-
-    delete processor;
-
-    return 0;
 }
+
+void Qwen2VL_chat(char* prompt) {
+    processor->chat("I am Sam. How are you?");
+}
+
+void Qwen2VL_get_response(char* response) {
+    processor->get_response(response);
+}
+
+void Qwen2VL_del() {
+    delete processor;
+}
+
+// int main(int argc, char ** argv) {
+//     char* response;
+
+//     Qwen2VL_init(
+//         "/home/sami/Documents/projects/technology-robot/third-party/llama.cpp/tmp/Qwen2-VL-2B-Instruct-Q4_K_L.gguf",
+//         "/home/sami/Documents/projects/technology-robot/third-party/llama.cpp/tmp/mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
+//         "You are a helpful assistant.",
+//         4096,
+//         0.3,
+//         7,
+//         0.7,
+//         1024
+//     );
+
+//     while (true) {
+//         processor->chat("Make a story about deer");
+//         processor->get_response(response);
+//         std::cout << response << std::endl;
+
+//         processor->chat("Repeat the story from before");
+//         processor->get_response(response);
+//         std::cout << response << std::endl;
+//     }
+
+//     return 0;
+// }

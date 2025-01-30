@@ -3,9 +3,11 @@ add_library(llava OBJECT
             llava.h
             clip.cpp
             clip.h
+            qwen2vl-lib.cpp
+            qwen2vl-lib.h
             )
 
-target_link_libraries(llava PRIVATE ggml llama ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(llava PRIVATE ggml common llama ${CMAKE_THREAD_LIBS_INIT})
 
 target_include_directories(llava PUBLIC .)
 target_include_directories(llava PUBLIC ../..)
@@ -18,7 +20,7 @@ if (BUILD_SHARED_LIBS)
     set_target_properties(llava PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(llava PRIVATE LLAMA_SHARED LLAMA_BUILD)
     add_library(llava_shared SHARED $<TARGET_OBJECTS:llava>)
-    target_link_libraries(llava_shared PRIVATE ggml llama ${CMAKE_THREAD_LIBS_INIT})
+    target_link_libraries(llava_shared PRIVATE ggml common llama ${CMAKE_THREAD_LIBS_INIT})
     install(TARGETS llava_shared LIBRARY)
 endif()
 
@@ -57,3 +59,10 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 # install(TARGETS ${TARGET} RUNTIME)
 # target_link_libraries(${TARGET} PRIVATE common llava ${CMAKE_THREAD_LIBS_INIT})
 # target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET llama-clip-quantize)
+add_executable(${TARGET} clip-quantize.cpp)
+set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-clip-quantize)
+install(TARGETS ${TARGET} RUNTIME)
+target_link_libraries(${TARGET} PRIVATE common llava ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)

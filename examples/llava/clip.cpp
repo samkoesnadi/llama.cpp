@@ -3,31 +3,32 @@
 // I'll gradually clean and extend it
 // Note: Even when using identical normalized image inputs (see normalize_image_u8_to_f32()) we have a significant difference in resulting embeddings compared to pytorch
 #include "clip.h"
+#include "log.h"
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "gguf.h"
 
-//#ifdef GGML_USE_CUDA
-//#include "ggml-cuda.h"
-//#endif
-//
-//#ifdef GGML_USE_SYCL
-//#include "ggml-sycl.h"
-//#endif
-//
-//#ifdef GGML_USE_METAL
-//#include "ggml-metal.h"
-//#endif
-//
-//#ifdef GGML_USE_CANN
-//#include "ggml-cann.h"
-//#endif
-//
-//#ifdef GGML_USE_VULKAN
-//#include "ggml-vulkan.h"
-//#endif
+// #ifdef GGML_USE_CUDA
+// #include "ggml-cuda.h"
+// #endif
+
+// #ifdef GGML_USE_SYCL
+// #include "ggml-sycl.h"
+// #endif
+
+// #ifdef GGML_USE_METAL
+// #include "ggml-metal.h"
+// #endif
+
+// #ifdef GGML_USE_CANN
+// #include "ggml-cann.h"
+// #endif
+
+// #ifdef GGML_USE_VULKAN
+// #include "ggml-vulkan.h"
+// #endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -45,17 +46,17 @@
 #include <cinttypes>
 #include <limits>
 
-#if defined(LLAVA_LOG_OFF)
-#   define LOG_INF(...)
-#   define LOG_WRN(...)
-#   define LOG_ERR(...)
-#   define LOG_DBG(...)
-#else // defined(LLAVA_LOG_OFF)
-#   define LOG_INF(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
-#   define LOG_WRN(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
-#   define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
-#   define LOG_DBG(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
-#endif // defined(LLAVA_LOG_OFF)
+// #if defined(LLAVA_LOG_OFF)
+// #   define LOG_INF(...)
+// #   define LOG_WRN(...)
+// #   define LOG_ERR(...)
+// #   define LOG_DBG(...)
+// #else // defined(LLAVA_LOG_OFF)
+// #   define LOG_INF(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
+// #   define LOG_WRN(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+// #   define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+// #   define LOG_DBG(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
+// #endif // defined(LLAVA_LOG_OFF)
 
 //#define CLIP_DEBUG_FUNCTIONS
 
@@ -1231,30 +1232,30 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
         }
     }
 
-//#ifdef GGML_USE_CUDA
+// #ifdef GGML_USE_CUDA
 //    new_clip->backend = ggml_backend_cuda_init(0);
 //    LOG_INF("%s: CLIP using CUDA backend\n", __func__);
-//#endif
-//
-//#ifdef GGML_USE_METAL
+// #endif
+
+// #ifdef GGML_USE_METAL
 //    new_clip->backend = ggml_backend_metal_init();
 //    LOG_INF("%s: CLIP using Metal backend\n", __func__);
-//#endif
-//
-//#ifdef GGML_USE_CANN
+// #endif
+
+// #ifdef GGML_USE_CANN
 //    new_clip->backend = ggml_backend_cann_init(0);
 //    LOG_INF("%s: CLIP using CANN backend\n", __func__);
-//#endif
-//
-//#ifdef GGML_USE_VULKAN
+// #endif
+
+// #ifdef GGML_USE_VULKAN
 //    new_clip->backend = ggml_backend_vk_init(0);
 //    LOG_INF("%s: CLIP using Vulkan backend\n", __func__);
-//#endif
-//
-//#ifdef GGML_USE_SYCL
+// #endif
+
+// #ifdef GGML_USE_SYCL
 //    new_clip->backend = ggml_backend_sycl_init(0);
 //    LOG_INF("%s: CLIP using SYCL backend\n", __func__);
-//#endif
+// #endif
 
     if (!new_clip->backend) {
         new_clip->backend = ggml_backend_cpu_init();
@@ -2655,10 +2656,8 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 }
 
 bool clip_model_quantize(const char * fname_inp, const char * fname_out, const int itype) {
-    ggml_type type = GGML_TYPE_Q4_1;
-
     assert(itype < GGML_TYPE_COUNT);
-    type = static_cast<ggml_type>(itype);
+    ggml_type type = static_cast<ggml_type>(itype);
 
     auto * ctx_clip = clip_model_load(fname_inp, 2);
 
@@ -2679,7 +2678,7 @@ bool clip_model_quantize(const char * fname_inp, const char * fname_out, const i
         struct ggml_tensor * cur = ggml_get_tensor(ctx_data, name);
         gguf_add_tensor(ctx_out, cur);
     }
-
+    // return 1;
     const size_t meta_size = gguf_get_meta_size(ctx_out);
     for (size_t i = 0; i < meta_size; ++i) {
         fout.put(0);
@@ -2711,8 +2710,8 @@ bool clip_model_quantize(const char * fname_inp, const char * fname_out, const i
             }
         }
 
-        // quantize only 2D tensors
-        quantize &= (ggml_n_dims(cur) == 2);
+        // quantize only 2D tensors and bigger than block size
+        quantize &= (ggml_n_dims(cur) == 2) && cur->ne[0] > ggml_blck_size(type);
 
         if (quantize) {
             new_type = type;
