@@ -506,7 +506,7 @@ protected:
 
 public:
     int get_response(char* &response_chr) {
-        response_chr = (char*) response.c_str();
+        memcpy(response_chr, (char*) response.c_str(), response.length());
         return 0;
     }
 
@@ -620,41 +620,52 @@ public:
 
 Qwen2VL* processor = nullptr;
 
-void Qwen2VL_init(
-    const char* model,
-    const char* mmproj,
-    const char* system_prompt,
-    unsigned int ctx_size = 4096,
-    float temp = 0.8,
-    int top_k = 40,
-    float top_p = 0.9,
-    int n_predict = -1,
-    int verbosity_level = -100
-) {
-    processor = new Qwen2VL(
-        model,
-        mmproj,
-        system_prompt,
-        ctx_size,
-        temp,
-        top_k,
-        top_p,
-        n_predict,
-        verbosity_level
-    );
+extern "C" {
+    __attribute__((visibility("default")))
+    __attribute((used))
+    void Qwen2VL_init(
+        const char* model,
+        const char* mmproj,
+        const char* system_prompt,
+        unsigned int ctx_size = 4096,
+        float temp = 0.8,
+        int top_k = 40,
+        float top_p = 0.9,
+        int n_predict = -1,
+        int verbosity_level = -100
+    ) {
+        processor = new Qwen2VL(
+            model,
+            mmproj,
+            system_prompt,
+            ctx_size,
+            temp,
+            top_k,
+            top_p,
+            n_predict,
+            verbosity_level
+        );
+    }
+
+    __attribute__((visibility("default")))
+    __attribute((used))
+    void Qwen2VL_chat(char* prompt) {
+        processor->chat(prompt);
+    }
+
+    __attribute__((visibility("default")))
+    __attribute((used))
+    void Qwen2VL_get_response(char* response) {
+        processor->get_response(response);
+    }
+
+    __attribute__((visibility("default")))
+    __attribute((used))
+    void Qwen2VL_del() {
+        delete processor;
+    }
 }
 
-void Qwen2VL_chat(char* prompt) {
-    processor->chat("I am Sam. How are you?");
-}
-
-void Qwen2VL_get_response(char* response) {
-    processor->get_response(response);
-}
-
-void Qwen2VL_del() {
-    delete processor;
-}
 
 // int main(int argc, char ** argv) {
 //     char* response;

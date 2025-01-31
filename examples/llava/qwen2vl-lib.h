@@ -7,12 +7,12 @@ void Qwen2VL_init(
     const char* model,
     const char* mmproj,
     const char* system_prompt,
-    unsigned int ctx_size = 4096,
-    float temp = 0.8,
-    int top_k = 40,
-    float top_p = 0.9,
-    int n_predict = -1,
-    int verbosity_level = -100
+    unsigned int ctx_size,
+    float temp,
+    int top_k,
+    float top_p,
+    int n_predict,
+    int verbosity_level
 );
 
 void Qwen2VL_chat(char* prompt);
