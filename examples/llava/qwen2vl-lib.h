@@ -15,7 +15,11 @@ void Qwen2VL_init(
     int verbosity_level
 );
 
-void Qwen2VL_chat(char* prompt);
+void Qwen2VL_chat_init(char* prompt);
+
+void Qwen2VL_chat_final();
+
+void Qwen2VL_predict_next_token(char* next_token);
 
 void Qwen2VL_get_response(char* response);
 

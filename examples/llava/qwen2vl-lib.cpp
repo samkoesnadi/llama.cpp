@@ -448,10 +448,12 @@ private:
     int n_past = 0;
     int cur_pos_id = 0;
     const char* system_prompt = "You are a helpful assistant.";
+    struct common_sampler* smpl = nullptr;
+    int i_process_loop = 0;
+    int max_tgt_len;
 
 protected:
-    void process_prompt(struct llava_context * ctx_llava, struct llava_image_embed * image_embed, common_params * params, const std::string & prompt) {
-        const int max_tgt_len = params->n_predict < 0 ? 256 : params->n_predict;
+    void process_prompt_init(struct llava_context * ctx_llava, struct llava_image_embed * image_embed, common_params * params, const std::string & prompt) {
         std::string user_prompt = prompt + "<|im_end|>\n<|im_start|>assistant\n";
 
         if (params->verbose_prompt) {
@@ -475,27 +477,17 @@ protected:
 
         LOG("\n");
 
-        struct common_sampler * smpl = common_sampler_init(ctx_llava->model, params->sampling);
+        smpl = common_sampler_init(ctx_llava->model, params->sampling);
         if (!smpl) {
             LOG_ERR("%s: failed to initialize sampling subsystem\n", __func__);
             exit(1);
         }
 
-        for (int i = 0; i < max_tgt_len; i++) {
-            const char * tmp = sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
-            if (strcmp(tmp, "</s>") == 0) break;
-            if (strstr(tmp, "###")) break; // Yi-VL behavior
-            response += tmp;
-            LOG("%s", tmp);
-            if (strstr(response.c_str(), "<|im_end|>")) break; // Yi-34B llava-1.6 - for some reason those decode not as the correct token (tokenizer works)
-            if (strstr(response.c_str(), "<|im_start|>")) break; // Yi-34B llava-1.6
-            if (strstr(response.c_str(), "USER:")) break; // mistral llava-1.6
+        i_process_loop = 0;
+    }
 
-            fflush(stdout);
-        }
-
+    void process_prompt_final() {
         common_sampler_free(smpl);
-        LOG("\n");
     }
 
     void eval_system_prompt() {
@@ -505,7 +497,7 @@ protected:
     }
 
 public:
-    int get_response(char* &response_chr) {
+    int get_response(char* response_chr) {
         memcpy(response_chr, (char*) response.c_str(), response.length());
         return 0;
     }
@@ -556,6 +548,8 @@ public:
         this->ctx_llava = llava_init_context(&default_params, this->model, verbosity_level);
 
         eval_system_prompt();
+
+        max_tgt_len = default_params.n_predict < 0 ? 256 : default_params.n_predict;
     }
 
     ~Qwen2VL() {
@@ -566,7 +560,7 @@ public:
         llama_model_free(this->model);
     }
 
-    int chat(const char* prompt) {
+    int chat_init(const char* prompt) {
         if ((n_past + default_params.n_predict) > default_params.n_ctx) {
             n_past = 0;
             cur_pos_id = 0;
@@ -590,27 +584,50 @@ public:
         params.prompt = std::string(prompt);
         response = "";
 
+        struct llava_image_embed * image_embed = nullptr;
+
         if (prompt_contains_image(params.prompt)) {
-            auto * image_embed = load_image(ctx_llava, &params, "");
-
-            // process the prompt
-            process_prompt(ctx_llava, image_embed, &params, params.prompt);
-            llava_image_embed_free(image_embed);
-        } else if (params.image.empty()) {
-            // process the prompt
-            process_prompt(ctx_llava, nullptr, &params, params.prompt);
-        } else {
-            for (auto & image : params.image) {
-                auto * image_embed = load_image(ctx_llava, &params, image);
-                if (!image_embed) {
-                    LOG_ERR("%s: failed to load image %s. Terminating\n\n", __func__, image.c_str());
-                    return 1;
-                }
-
-                // process the prompt
-                process_prompt(ctx_llava, image_embed, &params, params.prompt);
-                llava_image_embed_free(image_embed);
+            image_embed = load_image(ctx_llava, &params, "");
+        } else if (!params.image.empty()) {
+            auto image = params.image[0];
+            image_embed = load_image(ctx_llava, &params, image);
+            if (!image_embed) {
+                LOG_ERR("%s: failed to load image %s. Terminating\n\n", __func__, image.c_str());
+                return 1;
             }
+        }
+
+        process_prompt_init(ctx_llava, image_embed, &params, params.prompt);
+
+        if (image_embed != nullptr) llava_image_embed_free(image_embed);
+
+        return 0;
+    }
+
+    int chat_final() {
+        process_prompt_final();
+        return 0;
+    }
+
+    int predict_next_token(char* next_token) {
+        const char* tmp = (char*) sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
+        if (strcmp(tmp, "</s>") == 0) return 1;
+        if (strstr(tmp, "###")) return 1; // Yi-VL behavior
+        response += tmp;
+
+        memcpy(next_token, (char*) tmp, sizeof(tmp) / sizeof(char));
+
+        LOG("%s", tmp);
+        if (strstr(response.c_str(), "<|im_end|>")) return 1; // Yi-34B llava-1.6 - for some reason those decode not as the correct token (tokenizer works)
+        if (strstr(response.c_str(), "<|im_start|>")) return 1; // Yi-34B llava-1.6
+        if (strstr(response.c_str(), "USER:")) return 1; // mistral llava-1.6
+
+        fflush(stdout);
+
+        i_process_loop++;
+
+        if (i_process_loop >= max_tgt_len) {
+            return 1;
         }
 
         return 0;
@@ -649,8 +666,20 @@ extern "C" {
 
     __attribute__((visibility("default")))
     __attribute((used))
-    void Qwen2VL_chat(char* prompt) {
-        processor->chat(prompt);
+    void Qwen2VL_chat_init(char* prompt) {
+        processor->chat_init(prompt);
+    }
+
+    __attribute__((visibility("default")))
+    __attribute((used))
+    void Qwen2VL_chat_final() {
+        processor->chat_final();
+    }
+
+    __attribute__((visibility("default")))
+    __attribute((used))
+    void Qwen2VL_predict_next_token(char* next_token) {
+        processor->predict_next_token(next_token);
     }
 
     __attribute__((visibility("default")))
