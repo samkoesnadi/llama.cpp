@@ -127,7 +127,7 @@ static bool eval_string(struct llama_context * ctx_llama, const char* str, int n
     return true;
 }
 
-static const char * sample(struct common_sampler * smpl,
+static std::string sample(struct common_sampler * smpl,
                            struct llama_context * ctx_llama,
                            int * n_past, int * st_pos_id) {
     const llama_token id = common_sampler_sample(smpl, ctx_llama, -1);
@@ -143,7 +143,7 @@ static const char * sample(struct common_sampler * smpl,
         ret = common_token_to_piece(ctx_llama, id);
     }
     eval_id(ctx_llama, id, n_past, st_pos_id);
-    return ret.c_str();
+    return ret;
 }
 
 static const char* IMG_BASE64_TAG_BEGIN = "<img src=\"data:image/jpeg;base64,";
@@ -491,8 +491,7 @@ protected:
     }
 
     void eval_system_prompt() {
-        std::string full_system_prompt;
-        full_system_prompt = "<|im_start|>system\n" + std::string(system_prompt) + "<|im_end|>\n";
+        std::string full_system_prompt = "<|im_start|>system\n" + std::string(system_prompt) + "<|im_end|>\n";
         eval_string(ctx_llava->ctx_llama, full_system_prompt.c_str(), default_params.n_batch, &n_past, &cur_pos_id, true);
     }
 
@@ -610,14 +609,17 @@ public:
     }
 
     int predict_next_token(char* next_token) {
-        const char* tmp = (char*) sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
-        if (strcmp(tmp, "</s>") == 0) return 1;
-        if (strstr(tmp, "###")) return 1; // Yi-VL behavior
-        response += tmp;
+        std::string tmp = sample(smpl, ctx_llava->ctx_llama, &n_past, &cur_pos_id);
+        const char* tmp_c = tmp.c_str();
+        if (strcmp(tmp_c, "</s>") == 0) return 1;
+        if (strstr(tmp_c, "###")) return 1; // Yi-VL behavior
+        response += tmp_c;
 
-        memcpy(next_token, (char*) tmp, sizeof(tmp) / sizeof(char));
+        memcpy(next_token, (char*) tmp_c, tmp.length());
 
-        LOG("%s", tmp);
+        std::cout << next_token << std::endl;
+
+        LOG("%s", tmp_c);
         if (strstr(response.c_str(), "<|im_end|>")) return 1; // Yi-34B llava-1.6 - for some reason those decode not as the correct token (tokenizer works)
         if (strstr(response.c_str(), "<|im_start|>")) return 1; // Yi-34B llava-1.6
         if (strstr(response.c_str(), "USER:")) return 1; // mistral llava-1.6
@@ -678,8 +680,8 @@ extern "C" {
 
     __attribute__((visibility("default")))
     __attribute((used))
-    void Qwen2VL_predict_next_token(char* next_token) {
-        processor->predict_next_token(next_token);
+    int Qwen2VL_predict_next_token(char* next_token) {
+        return processor->predict_next_token(next_token);
     }
 
     __attribute__((visibility("default")))
