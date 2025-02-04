@@ -510,6 +510,7 @@ public:
         int top_k = 40,
         float top_p = 0.9,
         int n_predict = -1,
+        int gpu_layers = 0,
         int verbosity_level = -100
     ) : system_prompt(system_prompt) {
         common_log_set_verbosity_thold(verbosity_level);
@@ -531,7 +532,9 @@ public:
             "--top-p",
             (char*) std::to_string(top_p).c_str(),
             "--n-predict",
-            (char*) std::to_string(n_predict).c_str(),
+            (char*) std::to_string(n_predict).c_str()
+            // "--gpu-layers",
+            // (char*) std::to_string(gpu_layers).c_str()
         };
 
         if (!common_params_parse(sizeof(argv) / sizeof(char*), argv, default_params, LLAMA_EXAMPLE_LLAVA, print_usage)) {
@@ -539,7 +542,7 @@ public:
         }
 
         common_init();
-
+        
         this->model = llava_init(&default_params);
         if (model == nullptr) {
             throw sprintf("%s: error: failed to init llava model\n", __func__);
@@ -559,24 +562,30 @@ public:
         llama_model_free(this->model);
     }
 
+    int reset_chat() {
+        n_past = 0;
+        cur_pos_id = 0;
+
+        llama_free(ctx_llava->ctx_llama);
+        ctx_llava->ctx_llama = nullptr;
+
+        llama_context_params ctx_params = common_context_params_to_llama(default_params);
+        ctx_params.n_ctx           = default_params.n_ctx < 2048 ? 2048 : default_params.n_ctx; // we need a longer context size to process image embeddings
+        ctx_llava->ctx_llama = llama_init_from_model(model, ctx_params);
+
+        if (ctx_llava->ctx_llama == nullptr) {
+            LOG_ERR("%s: failed to create the llama_context\n" , __func__);
+            return -1;
+        }
+
+        eval_system_prompt();
+
+        return 0;
+    }
+
     int chat_init(const char* prompt) {
         if ((n_past + default_params.n_predict) > default_params.n_ctx) {
-            n_past = 0;
-            cur_pos_id = 0;
-
-            llama_free(ctx_llava->ctx_llama);
-            ctx_llava->ctx_llama = nullptr;
-
-            llama_context_params ctx_params = common_context_params_to_llama(default_params);
-            ctx_params.n_ctx           = default_params.n_ctx < 2048 ? 2048 : default_params.n_ctx; // we need a longer context size to process image embeddings
-            ctx_llava->ctx_llama = llama_init_from_model(model, ctx_params);
-
-            if (ctx_llava->ctx_llama == nullptr) {
-                LOG_ERR("%s: failed to create the llama_context\n" , __func__);
-                return -1;
-            }
-
-            eval_system_prompt();
+            reset_chat();
         }
 
         common_params params = default_params;
@@ -617,8 +626,6 @@ public:
 
         memcpy(next_token, (char*) tmp_c, tmp.length());
 
-        std::cout << next_token << std::endl;
-
         LOG("%s", tmp_c);
         if (strstr(response.c_str(), "<|im_end|>")) return 1; // Yi-34B llava-1.6 - for some reason those decode not as the correct token (tokenizer works)
         if (strstr(response.c_str(), "<|im_start|>")) return 1; // Yi-34B llava-1.6
@@ -637,7 +644,7 @@ public:
 };
 
 
-Qwen2VL* processor = nullptr;
+static Qwen2VL* processor = nullptr;
 
 extern "C" {
     __attribute__((visibility("default")))
@@ -651,8 +658,12 @@ extern "C" {
         int top_k = 40,
         float top_p = 0.9,
         int n_predict = -1,
+        int gpu_layers = 0,
         int verbosity_level = -100
     ) {
+        if (processor != nullptr) {
+            delete processor;
+        }
         processor = new Qwen2VL(
             model,
             mmproj,
@@ -662,6 +673,7 @@ extern "C" {
             top_k,
             top_p,
             n_predict,
+            gpu_layers,
             verbosity_level
         );
     }
@@ -676,6 +688,12 @@ extern "C" {
     __attribute((used))
     void Qwen2VL_chat_final() {
         processor->chat_final();
+    }
+
+    __attribute__((visibility("default")))
+    __attribute((used))
+    int Qwen2VL_chat_reset() {
+        return processor->reset_chat();
     }
 
     __attribute__((visibility("default")))

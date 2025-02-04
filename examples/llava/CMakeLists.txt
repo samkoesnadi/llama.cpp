@@ -15,6 +15,9 @@ target_include_directories(llava PUBLIC ../../common)
 
 target_compile_features(llava PRIVATE cxx_std_17)
 
+# Support Android 15 16k page size.
+target_link_options(llava PRIVATE "-Wl,-z,max-page-size=16384")
+
 add_library(llava_static STATIC $<TARGET_OBJECTS:llava>)
 if (BUILD_SHARED_LIBS)
     set_target_properties(llava PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -53,16 +56,16 @@ install(TARGETS ${TARGET} RUNTIME)
 target_link_libraries(${TARGET} PRIVATE common llava ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
-set(TARGET llama-qwen2vl-lib-test)
-add_executable(${TARGET} qwen2vl-lib-test.cpp)
-set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-qwen2vl-lib-test)
-install(TARGETS ${TARGET} RUNTIME)
-target_link_libraries(${TARGET} PRIVATE common llava ${CMAKE_THREAD_LIBS_INIT})
-target_compile_features(${TARGET} PRIVATE cxx_std_17)
-
 set(TARGET llama-clip-quantize)
 add_executable(${TARGET} clip-quantize.cpp)
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-clip-quantize)
 install(TARGETS ${TARGET} RUNTIME)
 target_link_libraries(${TARGET} PRIVATE common llava ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+# set(TARGET llama-qwen2vl-lib-test)
+# add_executable(${TARGET} qwen2vl-lib-test.c)
+# set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-qwen2vl-lib-test)
+# install(TARGETS ${TARGET} RUNTIME)
+# target_link_libraries(${TARGET} PRIVATE common llava ${CMAKE_THREAD_LIBS_INIT})
+# target_compile_features(${TARGET} PRIVATE cxx_std_17)

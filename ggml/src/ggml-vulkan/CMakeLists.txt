@@ -34,7 +34,7 @@ if (Vulkan_FOUND)
         message(STATUS "GL_KHR_cooperative_matrix not supported by glslc")
     else()
         message(STATUS "GL_KHR_cooperative_matrix supported by glslc")
-        add_compile_definitions(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+#        add_compile_definitions(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     endif()
 
     # Compile a test shader to determine whether GL_NV_cooperative_matrix2 is supported.
