@@ -20,6 +20,8 @@
 *.so
 *.swp
 *.tmp
+*.zip
+*.dat
 
 # IDE / OS
 
