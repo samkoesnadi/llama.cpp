@@ -510,7 +510,10 @@ public:
         int top_k = 40,
         float top_p = 0.9,
         int n_predict = -1,
-        int gpu_layers = 0,
+        int repeat_last_n = 64,
+        float repeat_penalty = 1.0,
+        float presence_penalty = 0.0,
+        float frequency_penalty = 0.0,
         int verbosity_level = -100
     ) : system_prompt(system_prompt) {
         common_log_set_verbosity_thold(verbosity_level);
@@ -532,9 +535,15 @@ public:
             "--top-p",
             (char*) std::to_string(top_p).c_str(),
             "--n-predict",
-            (char*) std::to_string(n_predict).c_str()
-            // "--gpu-layers",
-            // (char*) std::to_string(gpu_layers).c_str()
+            (char*) std::to_string(n_predict).c_str(),
+            "--repeat-last-n",
+            (char*) std::to_string(repeat_last_n).c_str(),
+            "--repeat-penalty",
+            (char*) std::to_string(repeat_penalty).c_str(),
+            "--presence-penalty",
+            (char*) std::to_string(presence_penalty).c_str(),
+            "--frequency-penalty",
+            (char*) std::to_string(frequency_penalty).c_str()
         };
 
         if (!common_params_parse(sizeof(argv) / sizeof(char*), argv, default_params, LLAMA_EXAMPLE_LLAVA, print_usage)) {
@@ -658,7 +667,10 @@ extern "C" {
         int top_k = 40,
         float top_p = 0.9,
         int n_predict = -1,
-        int gpu_layers = 0,
+        int repeat_last_n = 64,
+        float repeat_penalty = 1.0,
+        float presence_penalty = 0.0,
+        float frequency_penalty = 0.0,
         int verbosity_level = -100
     ) {
         if (processor != nullptr) {
@@ -673,7 +685,10 @@ extern "C" {
             top_k,
             top_p,
             n_predict,
-            gpu_layers,
+            repeat_last_n,
+            repeat_penalty,
+            presence_penalty,
+            frequency_penalty,
             verbosity_level
         );
     }

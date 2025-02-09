@@ -12,7 +12,10 @@ void Qwen2VL_init(
     int top_k,
     float top_p,
     int n_predict,
-    int gpu_layers,
+    int repeat_last_n,
+    float repeat_penalty,
+    float presence_penalty,
+    float frequency_penalty,
     int verbosity_level
 );
 
